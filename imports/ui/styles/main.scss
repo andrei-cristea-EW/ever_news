@@ -1,0 +1,63 @@
+// Variables
+$bg-color: #f8f9fa;
+$font-stack: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+$white: #fff;
+$border-color: #dee2e6;
+$shadow-light: 0 2px 4px rgba(0, 0, 0, 0.1);
+$shadow-medium: 0 4px 8px rgba(0, 0, 0, 0.15);
+$transition-duration: 0.2s;
+$hover-offset: -2px;
+$mobile-breakpoint: 768px;
+$container-min-height: 400px;
+$mobile-gap: 10px;
+
+// Mixins
+@mixin card-shadow($level: light) {
+  @if $level == light {
+    box-shadow: $shadow-light;
+  } @else if $level == medium {
+    box-shadow: $shadow-medium;
+  }
+}
+
+@mixin smooth-transition($properties: all) {
+  transition: $properties $transition-duration ease;
+}
+
+// Base styles
+body {
+  background-color: $bg-color;
+  font-family: $font-stack;
+}
+
+// Article components
+.article-item {
+  transition: transform $transition-duration ease, box-shadow $transition-duration ease;
+  @include card-shadow(light);
+  border: none;
+
+  &:hover {
+    transform: translateY($hover-offset);
+    @include card-shadow(medium);
+  }
+
+  .card-header {
+    background-color: $white;
+    border-bottom: 1px solid $border-color;
+
+    @media (max-width: $mobile-breakpoint) {
+      flex-direction: column;
+      align-items: flex-start !important;
+      gap: $mobile-gap;
+    }
+  }
+}
+
+.articles-container {
+  min-height: $container-min-height;
+}
+
+.card {
+  border: none;
+  @include card-shadow(light);
+}
