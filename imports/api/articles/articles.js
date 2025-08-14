@@ -36,7 +36,6 @@ export const generateArticle = (customDate = null) => {
 
 // generate articles so that we have infinite scroll
 export const generateMoreArticles = async (nrOfArticlesToGenerate) => {
-  console.log(`[generateMoreArticles] Generating ${nrOfArticlesToGenerate} more articles...`);
   const oldestArticle = await Articles.findOneAsync({}, { sort: { createdAt: 1 } });
   let baseTimestamp = oldestArticle ? new Date(oldestArticle.createdAt) : new Date();
   
