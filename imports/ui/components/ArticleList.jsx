@@ -6,6 +6,88 @@ import FilterPanel from './FilterPanel';
 import { Articles } from '../../api/articles/articles';
 
 const ITEMS_PER_PAGE = 10;
+const SCROLL_THRESHOLD = 100;
+const LOADING_TIMEOUT = 1000;
+
+const generateQuery = (filters) => {
+  let query = {};
+  if (filters.type && filters.type !== 'all') query.type = filters.type;
+  if (filters.source && filters.source !== 'all') query.source = filters.source;
+  if (filters.search) {
+    query.$or = [
+      { title: { $regex: filters.search, $options: 'i' } },
+      { content: { $regex: filters.search, $options: 'i' } }
+    ];
+  }
+  if (filters.dateFrom) query.createdAt = { $gte: new Date(filters.dateFrom) };
+  return query;
+};
+
+const buildPaginationQuery = (baseQuery, sortDirection, currentPage, endTimestamp, boundaryTimestamp) => {
+  let query = { ...baseQuery };
+  
+  if (sortDirection === 1 && boundaryTimestamp) {
+    query = {
+      ...query,
+      createdAt: {
+        ...query.createdAt,
+        $lt: boundaryTimestamp
+      }
+    };
+  }
+  
+  if (currentPage > 1 && endTimestamp) {
+    const operator = sortDirection === -1 ? '$lt' : '$gt';
+    query = {
+      ...query,
+      createdAt: {
+        ...query.createdAt,
+        [operator]: endTimestamp
+      }
+    };
+  }
+  
+  return query;
+};
+
+const calculateTimestampBoundaries = (articles, sortDirection, currentPage) => {
+  const newest = sortDirection === -1 ? articles[0] : articles[articles.length - 1];
+  const oldest = sortDirection === -1 ? articles[articles.length - 1] : articles[0];
+  
+  if (currentPage === 1) {
+    return {
+      startTimestamp: newest.createdAt,
+      endTimestamp: sortDirection === -1 ? oldest.createdAt : newest.createdAt,
+      boundaryEstablished: sortDirection === -1
+    };
+  } else {
+    return {
+      endTimestamp: sortDirection === -1 ? oldest.createdAt : newest.createdAt
+    };
+  }
+};
+
+const combineArticles = (liveArticles, historicalArticles, sortDirection, allHistoricalLoaded) => {
+  if (sortDirection === -1) {
+    return [...liveArticles, ...historicalArticles];
+  } else {
+    return allHistoricalLoaded 
+      ? [...historicalArticles, ...liveArticles]
+      : [...historicalArticles];
+  }
+};
+
+const mergeLiveArticles = (prev, newArticles, sortDirection) => {
+  const uniqueNew = newArticles.filter(newArticle => 
+    !prev.some(existing => existing._id === newArticle._id)
+  );
+  
+  if (uniqueNew.length === 0) return prev;
+  
+  return sortDirection === -1 
+    ? [...uniqueNew, ...prev]
+    : [...prev, ...uniqueNew];
+};
 
 const ArticleList = () => {
   const [currentPage, setCurrentPage] = useState(1);
@@ -19,7 +101,6 @@ const ArticleList = () => {
   const [liveArticles, setLiveArticles] = useState([]);
   const [boundaryEstablished, setBoundaryEstablished] = useState(false);
   const [allHistoricalLoaded, setAllHistoricalLoaded] = useState(false);
-  const [historicalBoundary, setHistoricalBoundary] = useState(null);
   const previousSubscriptionRef = useRef(null);
   const previousSortDirectionRef = useRef(null);
 
@@ -64,39 +145,7 @@ const ArticleList = () => {
     }
 
     const baseQuery = generateQuery(filters);
-    let query = { ...baseQuery };
-    
-    if (sortDirection === 1 && boundaryTimestamp) {
-      query = {
-        ...query,
-        createdAt: {
-          ...query.createdAt,
-          $lt: boundaryTimestamp
-        }
-      };
-    }
-    
-    const subscriptionId = `page${currentPage}-sort${sortDirection}-ts${endTimestamp ? endTimestamp.getTime() : 'none'}`;
-    
-    if (currentPage > 1 && endTimestamp) {
-      if (sortDirection === -1) {
-        query = {
-          ...query,
-          createdAt: {
-            ...query.createdAt,
-            $lt: endTimestamp
-          }
-        };
-      } else {
-        query = {
-          ...query,
-          createdAt: {
-            ...query.createdAt,
-            $gt: endTimestamp
-          }
-        };
-      }
-    }
+    const query = buildPaginationQuery(baseQuery, sortDirection, currentPage, endTimestamp, boundaryTimestamp);
     
     const publicationName = sortDirection === -1 ? 'articles.newest' : 'articles.oldest';
     const handle = Meteor.subscribe(publicationName, ITEMS_PER_PAGE, 0, query, boundaryTimestamp);
@@ -115,13 +164,13 @@ const ArticleList = () => {
     };
   }, [currentPage, filters, sortDirection, endTimestamp, pageArticles[currentPage], boundaryTimestamp, boundaryReady]);
 
-  const { liveArticlesData, liveLoading } = useTracker(() => {
+  const { liveArticlesData } = useTracker(() => {
     if (!boundaryEstablished || syncPaused) {
-      return { liveArticlesData: [], liveLoading: false };
+      return { liveArticlesData: [] };
     }
     
     if (sortDirection === 1 && !allHistoricalLoaded) {
-      return { liveArticlesData: [], liveLoading: false };
+      return { liveArticlesData: [] };
     }
 
     const baseQuery = generateQuery(filters);
@@ -139,8 +188,7 @@ const ArticleList = () => {
     }).fetch();
 
     return {
-      liveArticlesData,
-      liveLoading: !handle.ready()
+      liveArticlesData
     };
   }, [boundaryEstablished, syncPaused, filters, sortDirection, boundaryTimestamp, startTimestamp, allHistoricalLoaded]);
 
@@ -151,25 +199,11 @@ const ArticleList = () => {
         [currentPage]: articles
       }));
       
-      const newest = sortDirection === -1 ? articles[0] : articles[articles.length - 1];
-      const oldest = sortDirection === -1 ? articles[articles.length - 1] : articles[0];
+      const boundaries = calculateTimestampBoundaries(articles, sortDirection, currentPage);
       
-      if (currentPage === 1) {
-        if (sortDirection === -1) {
-          setStartTimestamp(newest.createdAt);
-          setEndTimestamp(oldest.createdAt);
-          setBoundaryEstablished(true);
-        } else {
-          setStartTimestamp(newest.createdAt);
-          setEndTimestamp(newest.createdAt);
-        }
-      } else {
-        if (sortDirection === -1) {
-          setEndTimestamp(oldest.createdAt);
-        } else {
-          setEndTimestamp(newest.createdAt);
-        }
-      }
+      if (boundaries.startTimestamp) setStartTimestamp(boundaries.startTimestamp);
+      if (boundaries.endTimestamp) setEndTimestamp(boundaries.endTimestamp);
+      if (boundaries.boundaryEstablished) setBoundaryEstablished(boundaries.boundaryEstablished);
       
       if (articles.length < ITEMS_PER_PAGE) {
         setAllHistoricalLoaded(true);
@@ -182,20 +216,7 @@ const ArticleList = () => {
 
   useEffect(() => {
     if (liveArticlesData.length > 0) {
-      setLiveArticles(prev => {
-        const newArticles = liveArticlesData.filter(newArticle => 
-          !prev.some(existing => existing._id === newArticle._id)
-        );
-        
-        if (newArticles.length > 0) {
-          if (sortDirection === -1) {
-            return [...newArticles, ...prev];
-          } else {
-            return [...prev, ...newArticles];
-          }
-        }
-        return prev;
-      });
+      setLiveArticles(prev => mergeLiveArticles(prev, liveArticlesData, sortDirection));
     }
   }, [liveArticlesData, sortDirection]);
 
@@ -226,12 +247,12 @@ const ArticleList = () => {
       const scrollHeight = document.documentElement.scrollHeight;
       const clientHeight = document.documentElement.clientHeight;
 
-      if (scrollTop + clientHeight >= scrollHeight - 100) {
+      if (scrollTop + clientHeight >= scrollHeight - SCROLL_THRESHOLD) {
         const expectedPage = Math.ceil(Object.keys(pageArticles).length);
         if (currentPage <= expectedPage) {
           isLoading = true;
           setCurrentPage(prev => prev + 1);
-          setTimeout(() => { isLoading = false; }, 1000);
+          setTimeout(() => { isLoading = false; }, LOADING_TIMEOUT);
         }
       }
     };
@@ -252,19 +273,6 @@ const ArticleList = () => {
     setSyncPaused(!syncPaused);
   };
 
-  function generateQuery(filters) {
-    let query = {};
-    if (filters.type && filters.type !== 'all') query.type = filters.type;
-    if (filters.source && filters.source !== 'all') query.source = filters.source;
-    if (filters.search) {
-      query.$or = [
-        { title: { $regex: filters.search, $options: 'i' } },
-        { content: { $regex: filters.search, $options: 'i' } }
-      ];
-    }
-    if (filters.dateFrom) query.createdAt = { $gte: new Date(filters.dateFrom) };
-    return query;
-  }
 
   const historicalArticles = [];
   for (let page = 1; page <= currentPage; page++) {
@@ -273,16 +281,7 @@ const ArticleList = () => {
     }
   }
   
-  let allArticles;
-  if (sortDirection === -1) {
-    allArticles = [...liveArticles, ...historicalArticles];
-  } else {
-    if (allHistoricalLoaded) {
-      allArticles = [...historicalArticles, ...liveArticles];
-    } else {
-      allArticles = [...historicalArticles];
-    }
-  }
+  const allArticles = combineArticles(liveArticles, historicalArticles, sortDirection, allHistoricalLoaded);
 
 
   return (
@@ -322,7 +321,7 @@ const ArticleList = () => {
             ))}
           </div>
 
-          {(isLoading || liveLoading) && (
+          {isLoading && (
             <div className="text-center my-4">
               <div className="spinner-border" role="status">
                 <span className="visually-hidden">Loading...</span>

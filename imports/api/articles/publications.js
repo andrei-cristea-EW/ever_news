@@ -2,15 +2,35 @@ import { Meteor } from 'meteor/meteor';
 import { check, Match } from 'meteor/check';
 import { Articles, generateMoreArticles } from './articles.js';
 
+const ARTICLE_GENERATION_THRESHOLD = 10;
+
+const buildSortOptions = (direction) => ({ createdAt: direction });
+
+const buildQueryWithBoundary = (query, boundary) => {
+  if (!boundary) return query;
+  return {
+    ...query,
+    createdAt: {
+      ...query.createdAt,
+      $lt: boundary
+    }
+  };
+};
+
+const findArticlesWithOptions = (query, limit, skip, sortOptions) => {
+  return Articles.find(query, {
+    limit,
+    skip,
+    sort: sortOptions
+  });
+};
+
 Meteor.publish('articles.live', function (query, sortDirection) {
   check(query, Object);
   check(sortDirection, Number);
 
-  const sortOptions = { createdAt: sortDirection };
-
-  return Articles.find(query, {
-    sort: sortOptions
-  });
+  const sortOptions = buildSortOptions(sortDirection);
+  return Articles.find(query, { sort: sortOptions });
 });
 
 Meteor.methods({
@@ -33,23 +53,15 @@ Meteor.publish('articles.newest', async function (limit, skip, query) {
   check(query, Object);
 
   const sortDirection = -1;
-  const sortOptions = { createdAt: sortDirection };
+  const sortOptions = buildSortOptions(sortDirection);
 
-  const articleCount = await Articles.find(query, {
-    limit: limit,
-    skip: skip,
-    sort: sortOptions
-  }).countAsync();
+  const articleCount = await findArticlesWithOptions(query, limit, skip, sortOptions).countAsync();
 
-  if (articleCount < 10) {
-    await generateMoreArticles(10);
+  if (articleCount < ARTICLE_GENERATION_THRESHOLD) {
+    await generateMoreArticles(ARTICLE_GENERATION_THRESHOLD);
   }
 
-  return Articles.find(query, {
-    limit: limit,
-    skip: skip,
-    sort: sortOptions
-  });
+  return findArticlesWithOptions(query, limit, skip, sortOptions);
 });
 
 Meteor.publish('articles.oldest', async function (limit, skip, query, historicalBoundary) {
@@ -59,24 +71,8 @@ Meteor.publish('articles.oldest', async function (limit, skip, query, historical
   check(historicalBoundary, Match.Maybe(Date));
 
   const sortDirection = 1;
-  const sortOptions = { createdAt: sortDirection };
+  const sortOptions = buildSortOptions(sortDirection);
+  const finalQuery = buildQueryWithBoundary(query, historicalBoundary);
 
-  let finalQuery = { ...query };
-  if (historicalBoundary) {
-    finalQuery = {
-      ...query,
-      createdAt: {
-        ...query.createdAt,
-        $lt: historicalBoundary
-      }
-    };
-  }
-
-
-
-  return Articles.find(finalQuery, {
-    limit: limit,
-    skip: skip,
-    sort: sortOptions
-  });
+  return findArticlesWithOptions(finalQuery, limit, skip, sortOptions);
 });
