@@ -1,5 +1,6 @@
 import { Meteor } from 'meteor/meteor';
 import '/imports/api/articles/publications';
+import '/imports/api/articles/methods';
 import { Articles, generateArticle } from '/imports/api/articles/articles';
 
 Meteor.startup(async () => {

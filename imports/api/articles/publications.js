@@ -33,20 +33,6 @@ Meteor.publish('articles.live', function (query, sortDirection) {
   return Articles.find(query, { sort: sortOptions });
 });
 
-Meteor.methods({
-  async getBoundaryTimestamp(query) {
-    check(query, Object);
-    
-    const newestArticle = await Articles.findOneAsync(query, { 
-      sort: { createdAt: -1 } 
-    });
-    
-    const boundaryTimestamp = newestArticle?.createdAt || new Date();
-    
-    return boundaryTimestamp;
-  }
-});
-
 Meteor.publish('articles.newest', async function (limit, skip, query) {
   check(limit, Number);
   check(skip, Number);
